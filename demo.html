@@ -6,11 +6,11 @@
     <script id="common-shader" type="x-shader/x-vertex">
         precision mediump float;
         
-        //#extension GL_EXT_frag_depth : enable
+        #extension GL_EXT_frag_depth : enable
         #define PI 3.14159265359
     </script>
 
-    <script id="screen-triangle-vs" type="x-shader/x-vertex">
+    <script id="flat-vs" type="x-shader/x-vertex">
 
         attribute vec2	aVertexPosition;
 
@@ -23,23 +23,22 @@
         
     </script>
 
-    <script id="triangle-vs" type="x-shader/x-vertex">
+    <script id="3d-vs" type="x-shader/x-vertex">
 
-        attribute vec3	aVertexPosition;
+        attribute vec4	aVertexPosition;
         uniform mat4	uVPMatrix;
 
-        varying vec4    oCol;        
+        varying vec4    oCol;
 
         void main(void) {
-            oCol = vec4(0.0, 0.0, 1.0, 1.0);
-            oCol.x = abs(aVertexPosition.x);
-            oCol.y = abs(aVertexPosition.z);
+            oCol = vec4(0.0, 0.0, 1.0, 0.2);
+            oCol.xyz = vec3(aVertexPosition.w);
             gl_Position = uVPMatrix * vec4(aVertexPosition.x, aVertexPosition.y, aVertexPosition.z, 1.0);
         }
         
     </script>
 
-    <script id="triangle-fs" type="x-shader/x-fragment">
+    <script id="simple-fs" type="x-shader/x-fragment">
 
         varying vec4    oCol;
 
@@ -48,7 +47,6 @@
         }
         
     </script>
-
     
     <script type="text/javascript">
         /// glMatrix: http://glmatrix.net/
@@ -164,57 +162,64 @@
         }
 
         ///////////////////////////////////////////////////////////////////////////////
-        GLBuffer.prototype.Draw = function() {
-            gl.drawElements(this.RenderMode, this.VertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+        GLBuffer.prototype.Draw = function(renderModeOverride = undefined) {
+            gl.drawElements(renderModeOverride ? renderModeOverride : this.RenderMode, this.VertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
         }        
     </script>
     <script type="text/javascript">
         ///////////////////////////////////////////////////////////////////////////////
-        var gl;
+        var gl
 
-        var g_Shader = [];
-        var g_Buffer = [];
+        var g_Shader = []
+        var g_Buffer = []
 
-        var g_AnimateOn = true;
-        var g_MouseDown = false;
-        var lastMouseX = null;
-        var lastMouseY = null;
-        var g_LastTime = 0;
+        var g_AnimateOn = true
+        var g_MouseDown = false
+        var lastMouseX = null
+        var lastMouseY = null
+        var g_LastTime = 0
 
-        var g_Azimuth = 0.4;
-        var g_Angle = 0.2;
-        var g_ZoomDist = 5;
-        var g_Orientation = quat.create();
+        var g_RenderModes = []
+        var g_RenderModeIndex = 0
+        var g_Azimuth = 0.4
+        var g_Angle = 0.2
+        var g_ZoomDist = 5
+        var g_Orientation = quat.create()
 
         ///////////////////////////////////////////////////////////////////////////////
         function initShaders() {
-            g_Shader.ScreenTriangle = new GLShaderProgram('screen-triangle-vs', 'triangle-fs', []);
-            g_Shader.Triangle = new GLShaderProgram('triangle-vs', 'triangle-fs', []);
+            g_Shader.Flat = new GLShaderProgram('flat-vs', 'simple-fs', []);
+            g_Shader.Triangle = new GLShaderProgram('3d-vs', 'simple-fs', []);
         }
 
         ///////////////////////////////////////////////////////////////////////////////
         function initBuffers() {
 
-            g_Buffer.ScreenTriangles = new GLBuffer([
-                -0.75, 0.5, -0.5, 0.25, -0.75, 0.0, 0.3, 0.0, 0.4, 0.1, 0.5, 0.0
-            ], 2, [0, 1, 2, 3, 4, 5], gl.TRIANGLES)
+            g_Buffer.Flat = new GLBuffer(
+                [-0.75, 0.5, -0.5, 0.25, -0.75, 0.0, 0.3, 0.0, 0.4, 0.1, 0.5, -1.0]
+                ,2, [0, 1, 2, 3, 4, 5], gl.TRIANGLES
+            )
 
+            var num_verts = 18;
             var verts = []
             var indices = []
-            var triangle_colors = []
-            for (var i = 0; i < 10; i++) {
-                for (var v = 0; v < 3; v++) {
-                    verts.push((Math.random() - 0.5) * 2, Math.random() - 0.5, (Math.random() - 0.5) * 2)
-                    triangle_colors.push(Math.random(), Math.random(), Math.random());
-                    indices.push(i * 3 + v)
-                }
+            for (var i = 0; i < 18; i++) {
+                verts.push(
+                    (Math.random() - 0.5) + (i - num_verts * 0.5) * 0.25
+                    ,Math.random() - 0.5
+                    ,Math.random() - 0.5
+                    ,(i % 3) * 0.2 + 0.2
+                )
+                indices.push(i)
             }
+            // g_Buffer.Model3D = new GLBuffer(verts, 4, indices, gl.LINES)
+            // g_Buffer.Model3D = new GLBuffer(verts, 4, indices, gl.LINE_STRIP)
+            // g_Buffer.Model3D = new GLBuffer(verts, 4, indices, gl.LINE_LOOP)
+            g_Buffer.Model3D = new GLBuffer(verts, 4, indices, gl.TRIANGLES)
+            // g_Buffer.Model3D = new GLBuffer(verts, 4, indices, gl.TRIANGLE_STRIP)
+            // g_Buffer.Model3D = new GLBuffer(verts, 4, indices, gl.TRIANGLE_FAN)
 
-            g_Buffer.TriangleColor = gl.createBuffer()
-            gl.bindBuffer(gl.ARRAY_BUFFER, g_Buffer.TriangleColor)
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triangle_colors), gl.STATIC_DRAW)
 
-            g_Buffer.Triangles3D = new GLBuffer(verts, 3, indices, gl.TRIANGLES);
             g_Buffer.Square = new GLBuffer([-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0], 2, [0, 1, 2, 0, 3, 2], gl.TRIANGLES);
             g_Buffer.Triangle = new GLBuffer([0.0, 1.0, -0.1, 0.0, 0.1, 0.0], 2, [0, 1, 2], gl.TRIANGLES);
         }
@@ -232,17 +237,23 @@
             gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.disable(gl.BLEND);
+            gl.enable(gl.DEPTH_TEST);
             gl.depthMask(true);
-            gl.disable(gl.CULL_FACE);
-            
-            g_Shader.ScreenTriangle.Activate();
-            g_Buffer.ScreenTriangles.Activate(g_Shader.ScreenTriangle.Program);
-            g_Buffer.ScreenTriangles.Draw();
+            // gl.enable(gl.CULL_FACE);
+
+            g_Shader.Flat.Activate();
+            g_Buffer.Flat.Activate(g_Shader.Flat.Program);
+            // g_Buffer.Flat.Draw();
+
+            // gl.depthMask(false);
+            // gl.enable(gl.BLEND);
+            // gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
             g_Shader.Triangle.Activate();
             gl.uniformMatrix4fv(gl.getUniformLocation(g_Shader.Triangle.Program, "uVPMatrix"), false, view_perspective_matrix);
-            g_Buffer.Triangles3D.Activate(g_Shader.Triangle.Program);
-            g_Buffer.Triangles3D.Draw();
+            g_Buffer.Model3D.Activate(g_Shader.Triangle.Program);
+            // g_Buffer.Model3D.Draw();
+            g_Buffer.Model3D.Draw(g_RenderModes[g_RenderModeIndex]);
         }
 
         ///////////////////////////////////////////////////////////////////////////////
@@ -257,8 +268,8 @@
         function getViewPerspectiveFromQuat(quaternion, zoom) {
 
             var aspect = gl.viewportWidth / gl.viewportHeight;
-            var near = 1;
-            var far = 1000;
+            var near = 0.01;
+            var far = 100;
             
             var perspective_matrix = mat4.create();
             mat4.perspective(perspective_matrix, Math.PI * 0.25, aspect, near, far);
@@ -320,6 +331,13 @@
         function handleKeyDown(event) {
             if(event.keyCode == 32) {
                 g_AnimateOn = !g_AnimateOn;
+            } else if(event.keyCode == 65) {
+                g_RenderModeIndex--
+                if (g_RenderModeIndex < 0) {
+                    g_RenderModeIndex += g_RenderModes.length
+                }
+            } else if(event.keyCode == 68) {
+                g_RenderModeIndex = (g_RenderModeIndex + 1) % (g_RenderModes.length)
             }
         }
 
@@ -357,7 +375,7 @@
         ///////////////////////////////////////////////////////////////////////////////
         function initGL(canvas) {
             try {
-                gl = canvas.getContext("experimental-webgl");
+                gl = canvas.getContext("webgl", { premultipliedAlpha: false, alpha: false });
                 gl.viewportWidth = canvas.width;
                 gl.viewportHeight = canvas.height;
             } catch (e) {
@@ -387,6 +405,8 @@
 
             gl.clearColor(0.0, 0.0, 0.0, 1.0);
             gl.enable(gl.DEPTH_TEST);
+
+            g_RenderModes = [gl.LINES, gl.LINE_STRIP, gl.LINE_LOOP, gl.TRIANGLES, gl.TRIANGLE_STRIP, gl.TRIANGLE_FAN]
             
             tick();
         }
