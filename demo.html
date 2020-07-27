@@ -29,10 +29,12 @@
         uniform mat4	uVPMatrix;
 
         varying vec4    oCol;
+        varying vec3    oPos;
 
         void main(void) {
             oCol = vec4(0.0, 0.0, 1.0, 0.2);
             oCol.xyz = vec3(aVertexPosition.w);
+            oPos = aVertexPosition.xyz;
             gl_Position = uVPMatrix * vec4(aVertexPosition.x, aVertexPosition.y, aVertexPosition.z, 1.0);
         }
         
@@ -44,6 +46,85 @@
 
         void main(void) {
             gl_FragColor = oCol;
+            //gl_FragDepthEXT = -1.0;
+        }
+        
+    </script>
+
+    <script id="waves-fs" type="x-shader/x-fragment">
+
+        varying vec4    oCol;
+        varying vec3    oPos;
+
+        void main(void) {
+            gl_FragColor = oCol;
+            float cycles = length(oPos) / 0.1;
+            float mod_cycle = cycles - floor(cycles);
+            if (mod_cycle < 0.05) {
+              gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            //} else if (mod_cycle < 0.2) {
+                //discard;
+            }
+        }
+        
+    </script>
+
+    <script id="texture-fs" type="x-shader/x-fragment">
+
+        varying vec3        oPos;
+
+        uniform sampler2D	uTexture;
+
+        void main(void) {
+            vec2 cycles = oPos.xy / 0.2;
+            vec2 uv = cycles - floor(cycles);
+
+            gl_FragColor = texture2D(uTexture, uv);
+        }
+        
+    </script>
+
+    <script id="mset-vs" type="x-shader/x-vertex">
+
+        attribute vec2	aVertexPosition;
+
+        uniform mat4	uVPMatrix;
+
+        varying vec2    oPos;
+
+        void main(void) {
+            oPos = aVertexPosition.xy;
+            gl_Position = uVPMatrix * vec4(aVertexPosition.x, aVertexPosition.y, 0.0, 1.0);
+        }
+        
+    </script>
+
+    <script id="mset-fs" type="x-shader/x-fragment">
+
+        varying vec2        oPos;
+
+        void main(void) {
+            float cx = oPos.x * 2.0;
+            float cy = oPos.y * 2.0;
+            float x = cx;
+            float y = cy;
+            const int max_iterations = 50;
+            int iters = 0;
+            for(int i = 0; i < max_iterations; i++) {
+                float nx = x * x - y * y + cx;
+                float ny = 2.0 * x * y + cy;
+                x = nx;
+                y = ny;
+                if ((abs(x) > 2.0) || (abs(y) > 2.0)) {
+                    iters = i;
+                    break;
+                }
+            }
+            float frac = float(iters) / float(max_iterations);
+            if (frac <= 0.1) {
+                discard;
+            }
+            gl_FragColor = vec4(frac * 0.5, frac * 0.5, frac, 1.0);
         }
         
     </script>
@@ -172,6 +253,7 @@
 
         var g_Shader = []
         var g_Buffer = []
+        var g_LoadedTextures = ["https://upload.wikimedia.org/wikipedia/en/thumb/6/61/Attempted_restoration_of_Ecce_Homo.jpg/170px-Attempted_restoration_of_Ecce_Homo.jpg"];
 
         var g_AnimateOn = true
         var g_MouseDown = false
@@ -189,7 +271,12 @@
         ///////////////////////////////////////////////////////////////////////////////
         function initShaders() {
             g_Shader.Flat = new GLShaderProgram('flat-vs', 'simple-fs', []);
-            g_Shader.Triangle = new GLShaderProgram('3d-vs', 'simple-fs', []);
+            g_Shader.ThreeD = new GLShaderProgram('3d-vs', 'simple-fs', []);
+            // g_Shader.ThreeD = new GLShaderProgram('3d-vs', 'waves-fs', []);
+            // g_Shader.ThreeD = new GLShaderProgram('3d-vs', 'texture-fs', []);
+
+            g_Shader.MSet = new GLShaderProgram('mset-vs', 'mset-fs', []);
+            
         }
 
         ///////////////////////////////////////////////////////////////////////////////
@@ -227,7 +314,7 @@
         ///////////////////////////////////////////////////////////////////////////////
         function drawScene() {
 
-            if(!g_Shader.Triangle.Valid) {
+            if(!g_Shader.Flat.Valid) {
                 return;
             }
 
@@ -249,11 +336,23 @@
             // gl.enable(gl.BLEND);
             // gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-            g_Shader.Triangle.Activate();
-            gl.uniformMatrix4fv(gl.getUniformLocation(g_Shader.Triangle.Program, "uVPMatrix"), false, view_perspective_matrix);
-            g_Buffer.Model3D.Activate(g_Shader.Triangle.Program);
+            g_Shader.ThreeD.Activate();
+            gl.uniformMatrix4fv(gl.getUniformLocation(g_Shader.ThreeD.Program, "uVPMatrix"), false, view_perspective_matrix);
+
+            // gl.activeTexture(gl.TEXTURE0);
+            // gl.bindTexture(gl.TEXTURE_2D, g_LoadedTextures[0].Texture);
+            
+            g_Buffer.Model3D.Activate(g_Shader.ThreeD.Program);
             // g_Buffer.Model3D.Draw();
             g_Buffer.Model3D.Draw(g_RenderModes[g_RenderModeIndex]);
+
+/*
+            g_Shader.MSet.Activate();
+            g_Buffer.Square.Activate(g_Shader.MSet.Program);
+            gl.uniformMatrix4fv(gl.getUniformLocation(g_Shader.MSet.Program, "uVPMatrix"), false, view_perspective_matrix);
+            g_Buffer.Square.Draw();
+*/
+
         }
 
         ///////////////////////////////////////////////////////////////////////////////
@@ -269,6 +368,7 @@
 
             var aspect = gl.viewportWidth / gl.viewportHeight;
             var near = 0.01;
+            // var near = 0.0001; // z-fighting
             var far = 100;
             
             var perspective_matrix = mat4.create();
@@ -419,6 +519,41 @@
             
             gl.getExtension("EXT_frag_depth");
 
+            var num_loads = g_LoadedTextures.length;
+
+            var tex_obj = [];
+            g_LoadedTextures.forEach(function(tex) {
+                var img = { filename: tex };
+                
+                img.image = new Image();
+                img.image.onload = function() {
+                    
+                    var texture = gl.createTexture();
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                    
+                    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img.image);
+                    
+                    img.Texture = texture;
+                    
+                    num_loads--;
+                    if(num_loads == 0) {
+                        StartSimulation();
+                    }
+                };
+                img.image.src = tex
+                img.image.crossOrigin = "anonymous"
+                
+                tex_obj.push(img);
+            });
+            
+            g_LoadedTextures = tex_obj;
+
+
             initShaders();
             initBuffers();
             
@@ -428,7 +563,7 @@
             document.onmousemove = handleMouseMove;
             document.onkeydown = handleKeyDown;
 
-            StartSimulation();
+            // StartSimulation();
         }
 
         ///////////////////////////////////////////////////////////////////////////////
@@ -455,8 +590,8 @@
     </script>
     
     </head>
-        <body onload="webGLStart();" oncontextmenu="return false;" >
-            <canvas id="canvas" style="border: none;" width="800" height="600"></canvas>
+        <body onload="webGLStart();" oncontextmenu="return false;" style="overflow: hidden" >
+            <canvas id="canvas" style="border: none;" width="1920" height="1080"></canvas>
             
             <div style="position: absolute; left: 10px; bottom: 10px; width: 0px; height: 0px">
                 <div style="border-top: 1px solid rgb(255,64,64); position: absolute; left: 0px; bottom: 0px; width: 300px; height: 120px; background-color: rgba(24, 0, 0, 0.5)">
